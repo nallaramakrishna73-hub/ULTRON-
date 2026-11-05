@@ -1,0 +1,6 @@
+{
+  "name": "ULTRON - Local AI Operating System",
+  "description": "Futuristic AI operating environment for Kali Linux featuring a 3D animated energy orb, cyber tools, system telemetry, voice console, and intelligent assistant.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
