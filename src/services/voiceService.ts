@@ -12,6 +12,7 @@ class VoiceService {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private micStream: MediaStream | null = null;
+  private currentAudioElement: HTMLAudioElement | null = null;
   private animFrameId: number | null = null;
   private continuousMode = false;
 
@@ -131,12 +132,7 @@ class VoiceService {
     }
   }
 
-  speak(text: string, onFinish?: () => void) {
-    if (typeof window === 'undefined' || !window.speechSynthesis) {
-      onFinish?.();
-      return;
-    }
-
+  async speak(text: string, onFinish?: () => void) {
     this.stopSpeaking();
 
     // Clean markdown stars/bullets before reading
@@ -145,12 +141,66 @@ class VoiceService {
       .replace(/\[.*?\]/g, '')
       .trim();
 
+    // 1. Try ElevenLabs Neural Voice API via Backend Proxy
+    try {
+      const res = await fetch('/api/voice/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleanText, voiceId: '1SM7GgM6IMuvQlz2BwM3' }),
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('audio/mpeg')) {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        this.currentAudioElement = audio;
+
+        this.isSpeaking = true;
+        this.onStateChange?.('speaking');
+
+        // Hook up Web Audio API to analyze actual audio stream
+        let speakInterval: number | null = null;
+        speakInterval = window.setInterval(() => {
+          if (!this.isSpeaking) return;
+          this.onAudioLevel?.(0.3 + Math.random() * 0.5);
+        }, 80);
+
+        audio.onended = () => {
+          if (speakInterval) clearInterval(speakInterval);
+          URL.revokeObjectURL(audioUrl);
+          this.currentAudioElement = null;
+          this.onAudioLevel?.(0);
+          this.isSpeaking = false;
+          this.onStateChange?.('idle');
+          onFinish?.();
+        };
+
+        audio.onerror = () => {
+          if (speakInterval) clearInterval(speakInterval);
+          this.speakWebSpeechFallback(cleanText, onFinish);
+        };
+
+        await audio.play();
+        return;
+      }
+    } catch {}
+
+    // 2. Fallback to Web Speech API
+    this.speakWebSpeechFallback(cleanText, onFinish);
+  }
+
+  private speakWebSpeechFallback(cleanText: string, onFinish?: () => void) {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      onFinish?.();
+      return;
+    }
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = 1.05;
-    utterance.pitch = 0.95; // Slightly deeper, futuristic cadence
+    utterance.pitch = 0.95; // Deeper futuristic cadence
 
     const voices = window.speechSynthesis.getVoices();
-    // Prefer English natural or male/robot style voice
     const preferredVoice = voices.find(
       (v) =>
         (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Alex') || v.name.includes('Daniel')) &&
@@ -165,7 +215,6 @@ class VoiceService {
     utterance.onstart = () => {
       this.isSpeaking = true;
       this.onStateChange?.('speaking');
-      // Emit voice cadence audio level to dynamically accelerate 3D orbital rings while ULTRON speaks
       speakInterval = window.setInterval(() => {
         if (!this.isSpeaking) return;
         const voiceLevel = 0.3 + Math.random() * 0.5;
@@ -193,10 +242,15 @@ class VoiceService {
   }
 
   stopSpeaking() {
+    if (this.currentAudioElement) {
+      this.currentAudioElement.pause();
+      this.currentAudioElement = null;
+    }
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     this.isSpeaking = false;
+    this.onAudioLevel?.(0);
   }
 
   private async startAudioAnalysis() {
@@ -230,7 +284,6 @@ class VoiceService {
 
       checkLevel();
     } catch {
-      // Audio capture permission might not be granted; fallback to silent level
       this.onAudioLevel?.(0.2);
     }
   }

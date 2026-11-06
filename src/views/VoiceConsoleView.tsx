@@ -120,7 +120,7 @@ export const VoiceConsoleView: React.FC<VoiceConsoleViewProps> = ({
             </div>
           </div>
 
-          <div className="w-full flex-1 min-h-[320px]">
+          <div className="w-full flex-1 min-h-[340px] h-[340px] relative">
             <ThreeOrb
               state={orbState}
               onActivateVoice={onActivateVoice}

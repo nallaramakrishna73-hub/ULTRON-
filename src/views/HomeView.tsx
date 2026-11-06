@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Send,
   Mic,
@@ -65,11 +65,52 @@ export const HomeView: React.FC<HomeViewProps> = ({
     { id: '4', title: 'Get ISRO Internship', completed: false, category: 'career' },
   ]);
 
-  const [activities] = useState<ActivityItem[]>([
+  const [activities, setActivities] = useState<ActivityItem[]>([
     { id: '1', title: 'Security scan completed', time: '21:45', category: 'security', status: 'completed' },
     { id: '2', title: 'Research: Zero-Day Exploit', time: '21:32', category: 'research', status: 'running' },
     { id: '3', title: 'System update ready', time: '21:20', category: 'system', status: 'completed' },
   ]);
+
+  // Sync real goals and audit activities from SQLite
+  useEffect(() => {
+    const fetchGoals = async () => {
+      try {
+        const res = await fetch('/api/database/goals');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setGoals(data.map((g: any) => ({
+              id: g.id,
+              title: g.title,
+              completed: Boolean(g.completed),
+              category: g.category || 'cyber',
+            })));
+          }
+        }
+      } catch {}
+    };
+
+    const fetchAudit = async () => {
+      try {
+        const res = await fetch('/api/database/audit');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setActivities(data.slice(0, 4).map((a: any) => ({
+              id: a.id,
+              title: `$ ${a.command}`,
+              time: a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent',
+              category: a.command.includes('scan') || a.command.includes('lynis') ? 'security' : 'system',
+              status: (a.status === 'success' ? 'completed' : 'alert') as 'completed' | 'alert',
+            })));
+          }
+        }
+      } catch {}
+    };
+
+    fetchGoals();
+    fetchAudit();
+  }, []);
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -78,7 +119,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
     setInputText('');
   };
 
-  const toggleGoal = (id: string) => {
+  const toggleGoal = async (id: string) => {
+    try {
+      await fetch('/api/database/goals/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+    } catch {}
+
     setGoals((prev) =>
       prev.map((g) => (g.id === id ? { ...g, completed: !g.completed } : g))
     );
@@ -133,7 +182,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* LEFT COLUMN: 3D Holographic AI Neural Globe (As in Picture) */}
         <div className="lg:col-span-4 flex flex-col justify-between rounded-2xl glass-panel p-3 relative overflow-hidden border border-amber-500/30 shadow-[0_0_25px_rgba(245,158,11,0.12)] min-h-[460px]">
           {/* Hologram Canvas Area */}
-          <div className="w-full flex-1 min-h-[380px] relative">
+          <div className="w-full flex-1 min-h-[400px] h-[400px] relative">
             <ThreeOrb
               state={orbState}
               onActivateVoice={onActivateVoice}
@@ -502,9 +551,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="space-y-2">
             {activities.map((act) => (
               <div key={act.id} className="flex items-center justify-between text-xs font-rajdhani">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0 pr-2">
                   <span
-                    className={`w-2 h-2 rounded-full ${
+                    className={`w-2 h-2 rounded-full shrink-0 ${
                       act.category === 'security'
                         ? 'bg-emerald-400'
                         : act.category === 'research'
@@ -512,9 +561,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         : 'bg-purple-400'
                     }`}
                   />
-                  <span className="text-slate-200 font-medium">{act.title}</span>
+                  <span className="text-slate-200 font-medium truncate">{act.title}</span>
                 </div>
-                <span className="text-[11px] font-mono text-slate-400">{act.time}</span>
+                <span className="text-[11px] font-mono text-slate-400 shrink-0">{act.time}</span>
               </div>
             ))}
           </div>
@@ -533,14 +582,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <div>
               <span className="text-slate-300 font-bold">BTC: </span>
               <span className="text-white">${tickers[0]?.price.toLocaleString()}</span>
-              <span className="text-emerald-400 text-[11px] ml-1.5 font-semibold">▲ +1.21%</span>
+              <span className="text-emerald-400 text-[11px] ml-1.5 font-semibold">▲ +{tickers[0]?.change24h || 1.2}%</span>
             </div>
           </div>
           <div className="flex items-baseline justify-between mb-2 text-xs font-mono">
             <div>
               <span className="text-slate-300 font-bold">ETH: </span>
               <span className="text-white">${tickers[1]?.price.toLocaleString()}</span>
-              <span className="text-emerald-400 text-[11px] ml-1.5 font-semibold">▲ +0.87%</span>
+              <span className="text-emerald-400 text-[11px] ml-1.5 font-semibold">▲ +{tickers[1]?.change24h || 0.8}%</span>
             </div>
           </div>
 

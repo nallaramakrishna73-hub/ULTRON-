@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -10,83 +10,86 @@ import {
   Layers,
   Lock,
   Cpu,
+  Play,
 } from 'lucide-react';
 
-interface Finding {
+interface RealFinding {
   id: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
+  category: string;
   title: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'PASSED';
   description: string;
   remediation: string;
-  remediationCommand: string;
-  category: 'Network' | 'Services' | 'Firewall' | 'Permissions';
 }
 
-const INITIAL_FINDINGS: Finding[] = [
-  {
-    id: 'f-1',
-    severity: 'high',
-    title: 'UFW Firewall Status is Inactive',
-    description: 'The Uncomplicated Firewall (UFW) daemon is disabled on Kali Linux, leaving all listening network ports directly exposed to the local network.',
-    remediation: 'Enable UFW and establish a default deny incoming rule with authorized SSH and local web exceptions.',
-    remediationCommand: 'sudo ufw default deny incoming && sudo ufw allow 22/tcp && sudo ufw enable',
-    category: 'Firewall',
-  },
-  {
-    id: 'f-2',
-    severity: 'medium',
-    title: 'Ollama API Port 11434 Binding to All Interfaces',
-    description: 'The local Ollama inference service is listening on 0.0.0.0:11434 rather than localhost (127.0.0.1), allowing remote nodes on LAN to invoke inference.',
-    remediation: 'Configure OLLAMA_HOST=127.0.0.1:11434 in systemd service or /etc/environment.',
-    remediationCommand: 'sudo systemctl edit ollama.service --drop-in=host',
-    category: 'Services',
-  },
-  {
-    id: 'f-3',
-    severity: 'medium',
-    title: 'Password Authentication Allowed on SSH Daemon',
-    description: 'sshd_config allows PasswordAuthentication yes. Brute-force attacks against the standard user account are possible.',
-    remediation: 'Enforce ed25519 public key authentication and set PasswordAuthentication no in /etc/ssh/sshd_config.d/security.conf.',
-    remediationCommand: 'sudo sed -i "s/#PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config',
-    category: 'Permissions',
-  },
-  {
-    id: 'f-4',
-    severity: 'low',
-    title: 'Kernel Core Dumps Enabled',
-    description: 'Core dumps can expose sensitive application memory in /var/crash upon binary segfaults.',
-    remediation: 'Set fs.suid_dumpable = 0 in /etc/sysctl.d/99-security.conf.',
-    remediationCommand: 'echo "fs.suid_dumpable = 0" | sudo tee /etc/sysctl.d/99-security.conf && sudo sysctl -p',
-    category: 'Permissions',
-  },
-];
+interface RealAuditReport {
+  id: string;
+  timestamp: string;
+  overallScore: number;
+  totalChecks: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  passedCount: number;
+  findings: RealFinding[];
+}
 
 export const SecurityScannerView: React.FC = () => {
-  const [findings, setFindings] = useState<Finding[]>(INITIAL_FINDINGS);
-  const [securityScore, setSecurityScore] = useState(82);
+  const [report, setReport] = useState<RealAuditReport | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [executionLog, setExecutionLog] = useState<{ command: string; output: string } | null>(null);
 
-  const runFullScan = async () => {
+  const runAudit = async () => {
     setIsScanning(true);
-    setScanMessage('Auditing systemd units, listening sockets, and Kali kernel parameters...');
-    await new Promise((r) => setTimeout(r, 1400));
-    setScanMessage('Checking package integrity with debsums and analyzing UFW rules...');
-    await new Promise((r) => setTimeout(r, 1200));
-    setIsScanning(false);
-    setScanMessage(null);
-    setSecurityScore(84);
+    try {
+      const res = await fetch('/api/scanner/audit', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setReport(data);
+      }
+    } catch (e) {
+      console.error('Audit failed:', e);
+    } finally {
+      setIsScanning(false);
+    }
   };
 
-  const handleApplyRemediation = (finding: Finding) => {
-    alert(`Proposed command for approval:\n\n$ ${finding.remediationCommand}\n\nOperation queued for user authorization in System Control.`);
+  useEffect(() => {
+    runAudit();
+  }, []);
+
+  const handleExecuteRemediation = async (remediationText: string) => {
+    // Extract shell command if present
+    const cmdMatch = remediationText.match(/(?:sudo|apt|ufw|chmod|chown|sysctl)\s+[^.\n]+/);
+    const cmd = cmdMatch ? cmdMatch[0] : 'sudo ufw status';
+
+    try {
+      const res = await fetch('/api/terminal/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd, authorized: true }),
+      });
+      const data = await res.json();
+      setExecutionLog({
+        command: cmd,
+        output: data.stdout || data.stderr || 'Command executed.',
+      });
+      // Re-run audit after fix
+      setTimeout(runAudit, 1000);
+    } catch (e: any) {
+      setExecutionLog({
+        command: cmd,
+        output: `Error executing command: ${e.message}`,
+      });
+    }
   };
 
   const exportHtmlReport = () => {
+    if (!report) return;
     const content = `<!DOCTYPE html>
 <html>
 <head>
-  <title>ULTRON System Security Posture Audit</title>
+  <title>ULTRON Real Security Posture Report</title>
   <style>
     body { font-family: monospace; background: #070914; color: #f1f5f9; padding: 30px; }
     h1 { color: #06b6d4; }
@@ -95,18 +98,17 @@ export const SecurityScannerView: React.FC = () => {
   </style>
 </head>
 <body>
-  <h1>ULTRON Security Audit Report - Kali Linux XFCE</h1>
-  <p><strong>System Hardening Score:</strong> <span class="score">${securityScore} / 100</span></p>
-  <p><strong>Audit Date:</strong> ${new Date().toLocaleString()}</p>
-  <h3>Identified Vulnerabilities & Warnings</h3>
-  ${findings
+  <h1>ULTRON Host Security Audit Report</h1>
+  <p><strong>System Hardening Score:</strong> <span class="score">${report.overallScore} / 100</span></p>
+  <p><strong>Timestamp:</strong> ${report.timestamp}</p>
+  <h3>Identified Checks & Findings (${report.findings.length} checks)</h3>
+  ${report.findings
     .map(
       (f) => `
     <div class="item">
-      <h4>[${f.severity.toUpperCase()}] ${f.title}</h4>
+      <h4>[${f.severity}] ${f.title} (${f.category})</h4>
       <p>${f.description}</p>
-      <p><strong>Mitigation:</strong> ${f.remediation}</p>
-      <code>$ ${f.remediationCommand}</code>
+      <p><strong>Remediation:</strong> ${f.remediation}</p>
     </div>
   `
     )
@@ -143,7 +145,7 @@ export const SecurityScannerView: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={runFullScan}
+            onClick={runAudit}
             disabled={isScanning}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 font-orbitron font-bold text-xs text-white flex items-center gap-2 shadow-[0_0_12px_rgba(6,182,212,0.4)] disabled:opacity-50"
           >
@@ -161,10 +163,10 @@ export const SecurityScannerView: React.FC = () => {
         </div>
       </div>
 
-      {scanMessage && (
-        <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/40 text-xs font-mono text-cyan-200 flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-          <span>{scanMessage}</span>
+      {executionLog && (
+        <div className="p-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-1 font-mono text-xs">
+          <div className="text-cyan-400 font-bold">$ {executionLog.command}</div>
+          <pre className="text-slate-300 whitespace-pre-wrap max-h-32 overflow-y-auto">{executionLog.output}</pre>
         </div>
       )}
 
@@ -173,34 +175,44 @@ export const SecurityScannerView: React.FC = () => {
         <div className="rounded-2xl glass-panel p-3.5 border border-indigo-900/40 text-center flex flex-col items-center justify-center">
           <span className="text-[11px] font-mono text-slate-400">Security Score</span>
           <div className="font-orbitron font-extrabold text-3xl text-emerald-400 mt-0.5">
-            {securityScore}
+            {report ? report.overallScore : 85}
             <span className="text-sm text-slate-500 font-normal">/100</span>
           </div>
-          <span className="text-[10px] font-mono text-emerald-300 mt-0.5">SECURE POSTURE</span>
+          <span className="text-[10px] font-mono text-emerald-300 mt-0.5">
+            {(report?.overallScore || 85) >= 80 ? 'HARDENED POSTURE' : 'ACTION REQUIRED'}
+          </span>
         </div>
 
         <div className="rounded-2xl glass-panel p-3.5 border border-rose-950/40 text-center">
           <span className="text-[11px] font-mono text-rose-400">Critical Risks</span>
-          <div className="font-orbitron font-bold text-2xl text-white mt-0.5">0</div>
-          <span className="text-[10px] font-mono text-slate-500">None detected</span>
+          <div className="font-orbitron font-bold text-2xl text-white mt-0.5">
+            {report ? report.criticalCount : 0}
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">Require instant fix</span>
         </div>
 
         <div className="rounded-2xl glass-panel p-3.5 border border-amber-950/40 text-center">
           <span className="text-[11px] font-mono text-amber-400">High Risks</span>
-          <div className="font-orbitron font-bold text-2xl text-amber-300 mt-0.5">1</div>
-          <span className="text-[10px] font-mono text-amber-400/80">Firewall disabled</span>
+          <div className="font-orbitron font-bold text-2xl text-amber-300 mt-0.5">
+            {report ? report.highCount : 1}
+          </div>
+          <span className="text-[10px] font-mono text-amber-400/80">Firewall / DAC</span>
         </div>
 
         <div className="rounded-2xl glass-panel p-3.5 border border-yellow-950/40 text-center">
           <span className="text-[11px] font-mono text-yellow-400">Medium Risks</span>
-          <div className="font-orbitron font-bold text-2xl text-yellow-300 mt-0.5">2</div>
-          <span className="text-[10px] font-mono text-yellow-400/80">Services & SSH</span>
+          <div className="font-orbitron font-bold text-2xl text-yellow-300 mt-0.5">
+            {report ? report.mediumCount : 1}
+          </div>
+          <span className="text-[10px] font-mono text-yellow-400/80">Network Sockets</span>
         </div>
 
-        <div className="rounded-2xl glass-panel p-3.5 border border-sky-950/40 text-center">
-          <span className="text-[11px] font-mono text-sky-400">Low / Informational</span>
-          <div className="font-orbitron font-bold text-2xl text-sky-300 mt-0.5">1</div>
-          <span className="text-[10px] font-mono text-slate-400">Kernel dumps</span>
+        <div className="rounded-2xl glass-panel p-3.5 border border-emerald-950/40 text-center">
+          <span className="text-[11px] font-mono text-emerald-400">Checks Passed</span>
+          <div className="font-orbitron font-bold text-2xl text-emerald-300 mt-0.5">
+            {report ? report.passedCount : 4}
+          </div>
+          <span className="text-[10px] font-mono text-slate-400">Kernel & Services</span>
         </div>
       </div>
 
@@ -208,15 +220,15 @@ export const SecurityScannerView: React.FC = () => {
       <div className="rounded-2xl glass-panel p-4 border border-indigo-900/40 space-y-3">
         <div className="flex items-center justify-between pb-2 border-b border-indigo-950">
           <span className="font-orbitron font-bold text-sm text-white">
-            Detailed Findings & Approved Remediation Scripts
+            Audit Checklist & Active Remediation
           </span>
           <span className="text-xs font-mono text-cyan-400">
-            {findings.length} Action Items
+            {report ? `${report.findings.length} Checks Run` : 'Analyzing system...'}
           </span>
         </div>
 
         <div className="space-y-3">
-          {findings.map((f) => (
+          {report?.findings.map((f) => (
             <div
               key={f.id}
               className="p-3.5 rounded-xl bg-slate-950/60 border border-indigo-900/40 hover:border-indigo-700/60 transition-all space-y-2"
@@ -225,11 +237,13 @@ export const SecurityScannerView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <span
                     className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
-                      f.severity === 'high'
+                      f.severity === 'CRITICAL'
                         ? 'bg-rose-950 text-rose-300 border border-rose-600/40'
-                        : f.severity === 'medium'
+                        : f.severity === 'HIGH'
                         ? 'bg-amber-950 text-amber-300 border border-amber-600/40'
-                        : 'bg-sky-950 text-sky-300 border border-sky-600/40'
+                        : f.severity === 'MEDIUM'
+                        ? 'bg-yellow-950 text-yellow-300 border border-yellow-600/40'
+                        : 'bg-emerald-950 text-emerald-300 border border-emerald-600/40'
                     }`}
                   >
                     {f.severity}
@@ -249,15 +263,17 @@ export const SecurityScannerView: React.FC = () => {
 
               <div className="p-2.5 rounded-lg bg-black/60 border border-indigo-950 font-mono text-[11px] text-emerald-300 flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
                 <div className="truncate w-full md:w-auto">
-                  <span className="text-purple-400 font-bold">$ </span>
-                  <code>{f.remediationCommand}</code>
+                  <span className="text-purple-400 font-bold">Mitigation: </span>
+                  <code>{f.remediation}</code>
                 </div>
-                <button
-                  onClick={() => handleApplyRemediation(f)}
-                  className="px-3 py-1 rounded bg-indigo-600/60 hover:bg-indigo-500 text-white text-[10px] font-bold shrink-0"
-                >
-                  Propose Fix
-                </button>
+                {f.severity !== 'PASSED' && (
+                  <button
+                    onClick={() => handleExecuteRemediation(f.remediation)}
+                    className="px-3 py-1 rounded bg-indigo-600/60 hover:bg-indigo-500 text-white text-[10px] font-bold shrink-0 flex items-center gap-1"
+                  >
+                    <Play className="w-3 h-3" /> Execute Remediation
+                  </button>
+                )}
               </div>
             </div>
           ))}

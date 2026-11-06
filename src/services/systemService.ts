@@ -46,7 +46,7 @@ export const KALI_CYBER_TOOLS: CyberTool[] = [
     installed: true,
     version: '7.94-kali',
     status: 'ready',
-    defaultCommand: 'nmap -sV -sC -Pn -T4 192.168.56.101',
+    defaultCommand: 'nmap -sV -sC -Pn -T4 127.0.0.1',
     safeProfileOnly: true,
   },
   {
@@ -57,18 +57,7 @@ export const KALI_CYBER_TOOLS: CyberTool[] = [
     installed: true,
     version: '4.2.2',
     status: 'ready',
-    defaultCommand: 'tshark -i eth0 -c 100 -f "tcp port 80 or tcp port 443"',
-    safeProfileOnly: true,
-  },
-  {
-    id: 'metasploit',
-    name: 'Metasploit Framework',
-    category: 'Exploitation',
-    description: 'Penetration testing platform for vulnerability verification and security assessment research in authorized labs.',
-    installed: true,
-    version: 'v6.3.55',
-    status: 'ready',
-    defaultCommand: 'msfconsole -q -x "db_status; version"',
+    defaultCommand: 'tshark -i lo -c 20',
     safeProfileOnly: true,
   },
   {
@@ -90,7 +79,7 @@ export const KALI_CYBER_TOOLS: CyberTool[] = [
     installed: true,
     version: 'v3.6.0',
     status: 'ready',
-    defaultCommand: 'gobuster dir -u http://192.168.56.101 -w /usr/share/wordlists/dirb/common.txt -q',
+    defaultCommand: 'gobuster dir -u http://127.0.0.1:3000 -w /usr/share/wordlists/dirb/common.txt -q',
     safeProfileOnly: true,
   },
   {
@@ -101,18 +90,18 @@ export const KALI_CYBER_TOOLS: CyberTool[] = [
     installed: true,
     version: '2.5.0',
     status: 'ready',
-    defaultCommand: 'nikto -h http://192.168.56.101 -Tuning 1,2,3',
+    defaultCommand: 'nikto -h http://127.0.0.1:3000 -Tuning 1,2,3',
     safeProfileOnly: true,
   },
   {
     id: 'whatweb',
     name: 'WhatWeb Identifier',
     category: 'Reconnaissance',
-    description: 'Next generation web scanner recognizing technologies including content management systems (CMS), blogging platforms, and JS libraries.',
+    description: 'Next generation web scanner recognizing technologies including content management systems (CMS) and JS libraries.',
     installed: true,
     version: '0.5.5',
     status: 'ready',
-    defaultCommand: 'whatweb -v http://192.168.56.101',
+    defaultCommand: 'whatweb -v http://127.0.0.1:3000',
     safeProfileOnly: true,
   },
   {
@@ -142,21 +131,87 @@ export const KALI_CYBER_TOOLS: CyberTool[] = [
 class SystemService {
   private metrics: SystemMetrics = { ...INITIAL_METRICS };
   private tickers: MarketTicker[] = [...INITIAL_TICKERS];
+  private cyberTools: CyberTool[] = [...KALI_CYBER_TOOLS];
   private commandAuditLog: { command: string; timestamp: string; status: 'success' | 'denied' | 'error'; output: string }[] = [];
 
   constructor() {
-    // Start slight realistic telemetry fluctuations
-    setInterval(() => {
-      this.metrics.cpuUsage = Math.max(10, Math.min(85, Math.round(this.metrics.cpuUsage + (Math.random() - 0.48) * 4)));
-      this.metrics.ramUsage = Math.max(38, Math.min(75, Math.round(this.metrics.ramUsage + (Math.random() - 0.49) * 2)));
-      this.metrics.networkDownload = Number((12.4 + (Math.random() - 0.5) * 3.5).toFixed(1));
-      this.metrics.networkUpload = Number((8.7 + (Math.random() - 0.5) * 2.2).toFixed(1));
-      this.metrics.latencyMs = Math.round(11 + Math.random() * 4);
+    this.pollRealSystemMetrics();
+    this.pollRealTickers();
+    this.fetchRealCyberTools();
+  }
 
-      // Fluctuate crypto slightly
-      this.tickers[0].price = Number((this.tickers[0].price + (Math.random() - 0.48) * 25).toFixed(2));
-      this.tickers[1].price = Number((this.tickers[1].price + (Math.random() - 0.48) * 1.5).toFixed(2));
-    }, 2500);
+  // Poll real system telemetry from backend (/proc/stat, /proc/meminfo, etc.)
+  private async pollRealSystemMetrics() {
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch('/api/system/metrics');
+        if (res.ok) {
+          const data = await res.json();
+          this.metrics = {
+            ...this.metrics,
+            ...data,
+          };
+        }
+      } catch {}
+    };
+
+    fetchMetrics();
+    setInterval(fetchMetrics, 3000);
+  }
+
+  // Poll real live crypto tickers from backend Binance/CoinGecko stream
+  private async pollRealTickers() {
+    const fetchTickers = async () => {
+      try {
+        const res = await fetch('/api/trading/tickers');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            this.tickers = data.map((t: any) => ({
+              symbol: t.symbol,
+              name: t.name,
+              price: t.price,
+              change24h: t.change24h,
+              sparkline: [
+                t.price * 0.985,
+                t.price * 0.99,
+                t.price * 0.995,
+                t.price * 1.002,
+                t.price * 0.998,
+                t.price * 1.005,
+                t.price,
+              ],
+            }));
+          }
+        }
+      } catch {}
+    };
+
+    fetchTickers();
+    setInterval(fetchTickers, 6000);
+  }
+
+  // Detect installed Kali tools via backend
+  private async fetchRealCyberTools() {
+    try {
+      const res = await fetch('/api/cyber/tools');
+      if (res.ok) {
+        const tools = await res.json();
+        if (Array.isArray(tools) && tools.length > 0) {
+          this.cyberTools = tools.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            category: (t.category === 'recon' ? 'Reconnaissance' : t.category === 'passwords' ? 'Password Cracking' : 'Vulnerability Analysis') as any,
+            description: t.description,
+            installed: t.installed,
+            version: t.version,
+            status: (t.installed ? 'ready' : 'not_installed') as 'ready' | 'not_installed',
+            defaultCommand: `${t.binary} --help`,
+            safeProfileOnly: true,
+          }));
+        }
+      }
+    } catch {}
   }
 
   getMetrics(): SystemMetrics {
@@ -168,7 +223,7 @@ class SystemService {
   }
 
   getCyberTools(): CyberTool[] {
-    return [...KALI_CYBER_TOOLS];
+    return [...this.cyberTools];
   }
 
   async executeControlledCommand(
@@ -177,70 +232,36 @@ class SystemService {
   ): Promise<{ success: boolean; output: string; exitCode: number }> {
     const trimmed = command.trim();
 
-    // Dangerous command blocking (Safety Hardening)
-    const dangerousPatterns = [/rm\s+-rf\s+\//i, /mkfs/i, /dd\s+if=/i, />\s*\/dev\/sd/i, /:(){ :|:& };:/];
-    for (const pattern of dangerousPatterns) {
-      if (pattern.test(trimmed)) {
-        const errorMsg = 'SECURITY VIOLATION: Command blocked by ULTRON Permission Guard. Potential destructive system damage detected.';
-        this.commandAuditLog.unshift({ command: trimmed, timestamp: new Date().toLocaleTimeString(), status: 'denied', output: errorMsg });
-        return { success: false, output: errorMsg, exitCode: 126 };
+    try {
+      const res = await fetch('/api/terminal/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: trimmed, authorized: isApproved }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const output = data.stdout || data.stderr || (data.success ? '[Command completed with 0 errors]' : '[Command failed]');
+        this.commandAuditLog.unshift({
+          command: trimmed,
+          timestamp: new Date().toLocaleTimeString(),
+          status: data.blocked ? 'denied' : data.success ? 'success' : 'error',
+          output,
+        });
+
+        return {
+          success: data.success,
+          output,
+          exitCode: data.exitCode ?? (data.success ? 0 : 1),
+        };
       }
+    } catch (e: any) {
+      console.warn('Backend terminal execution failed, falling back:', e);
     }
 
-    if (!isApproved) {
-      const deniedMsg = 'Execution aborted: User approval required for elevated operation.';
-      this.commandAuditLog.unshift({ command: trimmed, timestamp: new Date().toLocaleTimeString(), status: 'denied', output: deniedMsg });
-      return { success: false, output: deniedMsg, exitCode: 1 };
-    }
-
-    await new Promise((r) => setTimeout(r, 600));
-
-    let output = '';
-    if (trimmed.startsWith('nmap')) {
-      output = `Starting Nmap 7.94 ( https://nmap.org ) at 2026-11-05 21:48 EST
-Nmap scan report for 192.168.56.101
-Host is up (0.00042s latency).
-Not shown: 994 closed tcp ports (reset)
-PORT     STATE SERVICE     VERSION
-22/tcp   open  ssh         OpenSSH 9.6p1 Debian 4 (protocol 2.0)
-80/tcp   open  http        nginx 1.24.0
-443/tcp  open  ssl/http    nginx 1.24.0
-3306/tcp open  mysql       MySQL 8.0.36
-8080/tcp open  http-proxy  Node.js Express framework
-MAC Address: 08:00:27:B4:9C:12 (Oracle VirtualBox virtual NIC)
-
-Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-Nmap done: 1 IP address (1 host up) scanned in 3.12 seconds`;
-    } else if (trimmed.startsWith('tshark')) {
-      output = `Running as user "root" and group "root". This could be dangerous.
-Capturing on 'eth0'
-    1 0.000000000 192.168.56.1 -> 192.168.56.101 TCP 74 54312 → 443 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 SACK_PERM TSval=3891409228 TSecr=0
-    2 0.000213100 192.168.56.101 -> 192.168.56.1 TCP 74 443 → 54312 [SYN, ACK] Seq=0 Ack=1 Win=65160 Len=0 MSS=1460 SACK_PERM
-    3 0.000305400 192.168.56.1 -> 192.168.56.101 TCP 66 54312 → 443 [ACK] Seq=1 Ack=1 Win=64240 Len=0
-    4 0.000950200 192.168.56.1 -> 192.168.56.101 TLSv1.3 583 Client Hello
-Packets captured: 100 packets | 0 dropped | Protocol distribution: TLSv1.3 (72%), DNS (18%), TCP (10%)`;
-    } else if (trimmed.includes('ss -tulnp') || trimmed.includes('netstat')) {
-      output = `Netid State  Recv-Q Send-Q  Local Address:Port   Peer Address:Port Process
-tcp   LISTEN 0      128          0.0.0.0:22            0.0.0.0:*     users:(("sshd",pid=712,fd=3))
-tcp   LISTEN 0      511          0.0.0.0:80            0.0.0.0:*     users:(("nginx",pid=842,fd=6))
-tcp   LISTEN 0      128        127.0.0.1:11434         0.0.0.0:*     users:(("ollama",pid=1120,fd=7))
-tcp   LISTEN 0      128        127.0.0.1:3000          0.0.0.0:*     users:(("node",pid=1540,fd=19))`;
-    } else if (trimmed.includes('uname')) {
-      output = `Linux kali-xfce-desktop 6.10.11-kali1-amd64 #1 SMP PREEMPT_DYNAMIC Kali 6.10.11-1kali1 (2026-10-18) x86_64 GNU/Linux\nkrishna`;
-    } else if (trimmed.includes('lynis') || trimmed.includes('audit')) {
-      output = `[+] Initializing Lynis 3.1.1 Enterprise Audit
-[+] Operating System: Kali GNU/Linux 2026.3
-[+] Kernel version: 6.10.11-kali1-amd64
-[+] Hardening Index: 78 / 100
-[+] Discovered open ports: 22, 80, 443, 11434
-[+] Warnings found: 2 (UFW inactive, Core dumps enabled)
-[+] Suggestions found: 14 (Enable SELinux/AppArmor profiles, install fail2ban)`;
-    } else {
-      output = `[ULTRON Execution Service] Command completed successfully.\n$ ${trimmed}\n[Process completed with exit status 0]`;
-    }
-
-    this.commandAuditLog.unshift({ command: trimmed, timestamp: new Date().toLocaleTimeString(), status: 'success', output });
-    return { success: true, output, exitCode: 0 };
+    const deniedMsg = 'Execution error: Could not reach ULTRON Terminal Engine.';
+    this.commandAuditLog.unshift({ command: trimmed, timestamp: new Date().toLocaleTimeString(), status: 'error', output: deniedMsg });
+    return { success: false, output: deniedMsg, exitCode: 1 };
   }
 
   getAuditLog() {

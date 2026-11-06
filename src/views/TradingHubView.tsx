@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -10,6 +10,7 @@ import {
   HelpCircle,
   Plus,
   Clock,
+  RefreshCw,
 } from 'lucide-react';
 import { MarketTicker } from '../types';
 
@@ -17,55 +18,105 @@ interface TradingHubViewProps {
   tickers: MarketTicker[];
 }
 
+interface RealKline {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTCUSDT');
   const [activeTab, setActiveTab] = useState<'chart' | 'smc' | 'calculator' | 'journal'>('chart');
+  const [klines, setKlines] = useState<RealKline[]>([]);
+  const [isLoadingChart, setIsLoadingChart] = useState<boolean>(false);
 
   // Risk Calculator State
   const [accountBalance, setAccountBalance] = useState<number>(10000);
   const [riskPercent, setRiskPercent] = useState<number>(1.0);
-  const [entryPrice, setEntryPrice] = useState<number>(108300);
-  const [stopLossPrice, setStopLossPrice] = useState<number>(107500);
+  const [entryPrice, setEntryPrice] = useState<number>(92000);
+  const [stopLossPrice, setStopLossPrice] = useState<number>(91200);
 
-  // Paper Trading Journal
-  const [trades, setTrades] = useState<{
-    id: string;
-    symbol: string;
-    side: 'LONG' | 'SHORT';
-    entry: number;
-    exit: number;
-    pnl: number;
-    notes: string;
-    date: string;
-  }[]>([
-    {
-      id: '1',
-      symbol: 'BTCUSDT',
-      side: 'LONG',
-      entry: 106800,
-      exit: 108200,
-      pnl: 1400,
-      notes: 'Bullish 4H FVG mitigation followed by MSS on 15m timeframe.',
-      date: '2026-11-04',
-    },
-    {
-      id: '2',
-      symbol: 'ETHUSDT',
-      side: 'SHORT',
-      entry: 3910,
-      exit: 3840,
-      pnl: 350,
-      notes: 'Bearish liquidity sweep above Asian Highs and aggressive displacement.',
-      date: '2026-11-03',
-    },
-  ]);
+  // Paper Trading Orders from SQLite
+  const [trades, setTrades] = useState<any[]>([]);
+  const [orderSide, setOrderSide] = useState<'BUY' | 'SELL'>('BUY');
+  const [orderNotes, setOrderNotes] = useState('');
 
-  const activeTicker = tickers.find((t) => t.symbol === selectedSymbol) || tickers[0];
+  const activeTicker = tickers.find((t) => t.symbol === selectedSymbol) || tickers[0] || {
+    symbol: 'BTCUSDT',
+    name: 'Bitcoin',
+    price: 92450,
+    change24h: 2.14,
+  };
+
+  const fetchKlines = async (symbol: string) => {
+    setIsLoadingChart(true);
+    try {
+      const res = await fetch(`/api/trading/klines?symbol=${symbol}&interval=1h&limit=24`);
+      if (res.ok) {
+        const data = await res.json();
+        setKlines(data);
+      }
+    } catch (e) {
+      console.error('Failed to load klines:', e);
+    } finally {
+      setIsLoadingChart(false);
+    }
+  };
+
+  const fetchTrades = async () => {
+    try {
+      const res = await fetch('/api/trading/orders');
+      if (res.ok) {
+        const data = await res.json();
+        setTrades(data);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchKlines(selectedSymbol);
+    setEntryPrice(activeTicker.price);
+    setStopLossPrice(Math.round(activeTicker.price * 0.985));
+  }, [selectedSymbol]);
+
+  useEffect(() => {
+    fetchTrades();
+  }, []);
+
+  const handlePlaceOrder = async () => {
+    try {
+      const res = await fetch('/api/trading/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: selectedSymbol,
+          side: orderSide,
+          entryPrice: activeTicker.price,
+          notes: orderNotes || `SMC 1H confirmation setup on ${selectedSymbol}`,
+        }),
+      });
+      if (res.ok) {
+        setOrderNotes('');
+        fetchTrades();
+        alert(`Order Placed: ${orderSide} ${selectedSymbol} @ $${activeTicker.price}`);
+      }
+    } catch (e: any) {
+      alert(`Order error: ${e.message}`);
+    }
+  };
 
   // Risk Calculations
   const riskAmount = (accountBalance * riskPercent) / 100;
   const slDistance = Math.abs(entryPrice - stopLossPrice);
   const calculatedPositionSize = slDistance > 0 ? (riskAmount / slDistance).toFixed(4) : '0';
+
+  // SVG Chart Scaling
+  const maxPrice = klines.length > 0 ? Math.max(...klines.map(k => k.high)) : 100000;
+  const minPrice = klines.length > 0 ? Math.min(...klines.map(k => k.low)) : 90000;
+  const priceRange = Math.max(1, maxPrice - minPrice);
 
   return (
     <div className="w-full h-full overflow-y-auto p-4 space-y-4">
@@ -80,13 +131,13 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
               TRADING HUB & MARKET RESEARCH
             </h1>
             <p className="text-xs font-rajdhani text-slate-300">
-              Institutional order flow, Smart Money Concepts (SMC), paper trading, and risk management calculator
+              Live Binance feeds, Smart Money Concepts (SMC), paper trading, and institutional liquidity tracking
             </p>
           </div>
         </div>
 
         {/* Ticker Selector Pills */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {tickers.map((t) => (
             <button
               key={t.symbol}
@@ -105,7 +156,7 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-indigo-950 pb-2">
+      <div className="flex items-center gap-2 border-b border-indigo-950 pb-2 flex-wrap">
         <button
           onClick={() => setActiveTab('chart')}
           className={`px-3.5 py-1.5 rounded-lg text-xs font-mono transition-all ${
@@ -114,7 +165,7 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Market Chart & Indicators
+          Live K-Line Chart & Indicators
         </button>
         <button
           onClick={() => setActiveTab('smc')}
@@ -124,7 +175,7 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Smart Money Concepts (SMC) AI Explainer
+          Smart Money Concepts (SMC) AI
         </button>
         <button
           onClick={() => setActiveTab('calculator')}
@@ -144,7 +195,7 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Paper Trading Journal ({trades.length})
+          Paper Trades ({trades.length})
         </button>
       </div>
 
@@ -156,92 +207,94 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-orbitron font-bold text-lg text-white">
-                  {activeTicker.symbol} • Perpetual Futures
+                  {activeTicker.symbol}
                 </span>
                 <span className="text-xs font-mono text-emerald-400 ml-2">
-                  ${activeTicker.price.toLocaleString()} (+{activeTicker.change24h}%)
+                  ${activeTicker.price.toLocaleString()} ({activeTicker.change24h >= 0 ? '+' : ''}{activeTicker.change24h}%)
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs font-mono text-slate-400">
-                <span className="px-2 py-0.5 rounded bg-slate-900 text-cyan-400">15M</span>
-                <span className="px-2 py-0.5 rounded bg-slate-900">1H</span>
-                <span className="px-2 py-0.5 rounded bg-slate-900">4H</span>
-                <span className="px-2 py-0.5 rounded bg-slate-900">1D</span>
-              </div>
+              <button
+                onClick={() => fetchKlines(selectedSymbol)}
+                className="p-1.5 rounded bg-slate-900 text-cyan-400 hover:text-cyan-200"
+                title="Refresh Candles"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingChart ? 'animate-spin' : ''}`} />
+              </button>
             </div>
 
-            {/* Simulated Interactive Candlestick / Area SVG Graph */}
+            {/* Real Candlestick Chart */}
             <div className="h-72 w-full bg-slate-950/80 rounded-xl border border-indigo-950 p-4 relative overflow-hidden flex flex-col justify-between">
-              {/* Grid Lines */}
-              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 p-4">
-                <div className="border-b border-indigo-500 w-full" />
-                <div className="border-b border-indigo-500 w-full" />
-                <div className="border-b border-indigo-500 w-full" />
-                <div className="border-b border-indigo-500 w-full" />
-              </div>
+              <div className="relative z-10 flex items-end justify-between h-48 px-2 gap-1">
+                {klines.map((candle, idx) => {
+                  const isUp = candle.close >= candle.open;
+                  const bodyHeight = Math.max(3, (Math.abs(candle.close - candle.open) / priceRange) * 160);
+                  const wickHeight = Math.max(5, ((candle.high - candle.low) / priceRange) * 160);
 
-              {/* Price Candlesticks simulation */}
-              <div className="relative z-10 flex items-end justify-between h-48 px-4">
-                {[
-                  { o: 60, c: 75, h: 80, l: 55, up: true },
-                  { o: 75, c: 70, h: 78, l: 65, up: false },
-                  { o: 70, c: 85, h: 90, l: 68, up: true },
-                  { o: 85, c: 82, h: 88, l: 78, up: false },
-                  { o: 82, c: 98, h: 105, l: 80, up: true },
-                  { o: 98, c: 92, h: 100, l: 88, up: false },
-                  { o: 92, c: 110, h: 115, l: 90, up: true },
-                  { o: 110, c: 125, h: 130, l: 108, up: true },
-                  { o: 125, c: 120, h: 128, l: 115, up: false },
-                  { o: 120, c: 138, h: 145, l: 118, up: true },
-                  { o: 138, c: 132, h: 140, l: 128, up: false },
-                  { o: 132, c: 150, h: 155, l: 130, up: true },
-                ].map((candle, idx) => (
-                  <div key={idx} className="flex flex-col items-center group relative cursor-crosshair">
-                    {/* Wick */}
-                    <div
-                      className={`w-[1.5px] ${candle.up ? 'bg-emerald-400' : 'bg-rose-400'}`}
-                      style={{ height: `${candle.h - candle.l}px` }}
-                    />
-                    {/* Body */}
-                    <div
-                      className={`w-3 rounded-xs ${
-                        candle.up ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-rose-500'
-                      }`}
-                      style={{ height: `${Math.abs(candle.c - candle.o) * 1.5}px` }}
-                    />
-                  </div>
-                ))}
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full group relative cursor-crosshair">
+                      <div
+                        className={`w-[1px] ${isUp ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                        style={{ height: `${wickHeight}px` }}
+                      />
+                      <div
+                        className={`w-full max-w-[12px] rounded-xs ${
+                          isUp ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500 shadow-[0_0_6px_#f43f5e]'
+                        }`}
+                        style={{ height: `${bodyHeight}px` }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
 
               {/* FVG Highlight Box */}
-              <div className="absolute top-24 left-1/3 w-36 h-10 border border-dashed border-cyan-400 bg-cyan-500/10 rounded flex items-center justify-center text-[10px] font-mono text-cyan-300 pointer-events-none">
-                Bullish FVG (4H Target)
+              <div className="absolute top-20 left-1/3 w-40 h-8 border border-dashed border-cyan-400 bg-cyan-500/10 rounded flex items-center justify-center text-[10px] font-mono text-cyan-300 pointer-events-none">
+                Bullish FVG (Institutional Target)
               </div>
 
               {/* Bottom Time Axis */}
               <div className="flex justify-between text-[10px] font-mono text-slate-500 pt-2 border-t border-indigo-950">
-                <span>12:00</span>
-                <span>15:00</span>
-                <span>18:00</span>
-                <span>21:00</span>
-                <span>CURRENT</span>
+                <span>24h Ago</span>
+                <span>12h Ago</span>
+                <span>6h Ago</span>
+                <span>Current Price: ${activeTicker.price.toLocaleString()}</span>
               </div>
             </div>
 
-            {/* Technical Indicators Summary */}
-            <div className="grid grid-cols-3 gap-2 text-xs font-mono">
-              <div className="p-2.5 rounded-xl bg-black/40 border border-indigo-950">
-                <span className="text-slate-400 text-[10px]">RSI (14): </span>
-                <span className="text-emerald-400 font-bold">58.4 (Neutral/Bullish)</span>
+            {/* Quick Order Execution Panel */}
+            <div className="p-3.5 rounded-xl bg-black/60 border border-indigo-900/40 flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setOrderSide('BUY')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold ${
+                    orderSide === 'BUY' ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.4)]' : 'bg-slate-900 text-slate-400'
+                  }`}
+                >
+                  BUY / LONG
+                </button>
+                <button
+                  onClick={() => setOrderSide('SELL')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold ${
+                    orderSide === 'SELL' ? 'bg-rose-600 text-white shadow-[0_0_10px_rgba(244,63,94,0.4)]' : 'bg-slate-900 text-slate-400'
+                  }`}
+                >
+                  SELL / SHORT
+                </button>
+                <input
+                  type="text"
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  placeholder="Strategy notes (e.g. 15m BOS)"
+                  className="px-2.5 py-1 rounded bg-black border border-indigo-950 text-xs font-mono text-white w-48"
+                />
               </div>
-              <div className="p-2.5 rounded-xl bg-black/40 border border-indigo-950">
-                <span className="text-slate-400 text-[10px]">EMA (20/50/200): </span>
-                <span className="text-cyan-400 font-bold">Golden Cross on 4H</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-black/40 border border-indigo-950">
-                <span className="text-slate-400 text-[10px]">MACD: </span>
-                <span className="text-purple-400 font-bold">+128.4 Bullish Divergence</span>
-              </div>
+
+              <button
+                onClick={handlePlaceOrder}
+                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 font-orbitron font-bold text-xs text-white"
+              >
+                EXECUTE PAPER ORDER
+              </button>
             </div>
           </div>
 
@@ -253,25 +306,21 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
 
             <div className="space-y-2 text-xs font-mono">
               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40 border border-indigo-950">
-                <span className="text-slate-400">Buy Volume (24h)</span>
-                <span className="text-emerald-400 font-bold">$1.42B (54%)</span>
+                <span className="text-slate-400">Current Symbol</span>
+                <span className="text-cyan-400 font-bold">{activeTicker.symbol}</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40 border border-indigo-950">
-                <span className="text-slate-400">Sell Volume (24h)</span>
-                <span className="text-rose-400 font-bold">$1.21B (46%)</span>
+                <span className="text-slate-400">Mark Price</span>
+                <span className="text-emerald-400 font-bold">${activeTicker.price.toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40 border border-indigo-950">
-                <span className="text-slate-400">Open Interest</span>
-                <span className="text-cyan-300 font-bold">$4.89B (+3.2%)</span>
-              </div>
-              <div className="flex items-center justify-between p-2 rounded-lg bg-black/40 border border-indigo-950">
-                <span className="text-slate-400">Funding Rate</span>
-                <span className="text-yellow-300 font-bold">+0.0100% (Neutral)</span>
+                <span className="text-slate-400">Open Orders</span>
+                <span className="text-purple-300 font-bold">{trades.length} active in SQLite</span>
               </div>
             </div>
 
             <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 text-xs font-rajdhani text-purple-200">
-              <strong>ULTRON Market Brief:</strong> Strong liquidity buildup observed above $109,200 swing high. Smart money footprint indicates accumulation before potential expansion. Paper trading recommended.
+              <strong>ULTRON Market Heuristic:</strong> Smart Money footprint identifies accumulation near the psychological handle. Respect the stop loss at ${stopLossPrice.toLocaleString()}.
             </div>
           </div>
         </div>
@@ -304,33 +353,6 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
             </h3>
             <p className="text-xs font-rajdhani text-slate-300 leading-relaxed">
               The earliest signal of a trend reversal. Occurs when price sweeps liquidity at a key level and violently displaces through the opposing swing point, creating an unmitigated FVG in the direction of the new trend.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl glass-panel border border-indigo-500/30 space-y-2">
-            <h3 className="font-orbitron font-bold text-sm text-indigo-300">
-              Liquidity Pools (BSL / SSL)
-            </h3>
-            <p className="text-xs font-rajdhani text-slate-300 leading-relaxed">
-              Buy-Side Liquidity (resting above equal highs / swing highs) and Sell-Side Liquidity (resting below equal lows). Institutional algorithms target these stop-loss clusters to fill their large block orders.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl glass-panel border border-amber-500/30 space-y-2">
-            <h3 className="font-orbitron font-bold text-sm text-amber-300">
-              Order Blocks (OB)
-            </h3>
-            <p className="text-xs font-rajdhani text-slate-300 leading-relaxed">
-              The last opposing candle prior to a rapid impulsive displacement that broke structure. Represents institutional sponsored orders where large players engineered liquidity.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl glass-panel border border-rose-500/30 space-y-2">
-            <h3 className="font-orbitron font-bold text-sm text-rose-300">
-              Risk-to-Reward (RRR)
-            </h3>
-            <p className="text-xs font-rajdhani text-slate-300 leading-relaxed">
-              The fundamental foundation of long-term trader profitability. High-probability setups demand at least a 1:3 or 1:4 RRR so a 40% win rate produces solid equity growth.
             </p>
           </div>
         </div>
@@ -396,12 +418,6 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
               <span>Calculated Position Size:</span>
               <span className="text-cyan-300 font-bold">{calculatedPositionSize} units</span>
             </div>
-            <div className="flex justify-between text-slate-300">
-              <span>Notional Trade Value:</span>
-              <span className="text-white font-bold">
-                ${(Number(calculatedPositionSize) * entryPrice).toFixed(2)}
-              </span>
-            </div>
           </div>
         </div>
       )}
@@ -411,39 +427,42 @@ export const TradingHubView: React.FC<TradingHubViewProps> = ({ tickers }) => {
         <div className="rounded-2xl glass-panel p-4 border border-indigo-900/40 space-y-3">
           <div className="flex items-center justify-between pb-2 border-b border-indigo-950">
             <span className="font-orbitron font-bold text-sm text-white">
-              Paper Trading Performance Record
+              Paper Trading Records (Stored in SQLite)
             </span>
             <span className="text-xs font-mono text-emerald-400">
-              Net Paper P&L: +$1,750.00
+              {trades.length} Positions Tracked
             </span>
           </div>
 
           <div className="space-y-2">
-            {trades.map((t) => (
-              <div
-                key={t.id}
-                className="p-3 rounded-xl bg-slate-950/60 border border-indigo-950 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 font-mono text-xs"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`px-2 py-0.5 rounded font-bold ${
-                      t.side === 'LONG' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
-                    }`}
-                  >
-                    {t.side}
-                  </span>
-                  <span className="text-white font-bold">{t.symbol}</span>
-                  <span className="text-slate-400">
-                    Entry: ${t.entry} → Exit: ${t.exit}
-                  </span>
-                </div>
-                <div className="text-slate-300 text-[11px] font-rajdhani">{t.notes}</div>
-                <div className="flex items-center gap-3">
-                  <span className="text-emerald-400 font-bold">+${t.pnl}</span>
-                  <span className="text-[10px] text-slate-500">{t.date}</span>
-                </div>
+            {trades.length === 0 ? (
+              <div className="text-center py-8 text-xs font-mono text-slate-500">
+                No paper trades placed yet. Use the chart tab to execute your first order.
               </div>
-            ))}
+            ) : (
+              trades.map((t) => (
+                <div
+                  key={t.id}
+                  className="p-3 rounded-xl bg-slate-950/60 border border-indigo-950 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 font-mono text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`px-2 py-0.5 rounded font-bold ${
+                        t.side === 'BUY' || t.side === 'LONG' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                      }`}
+                    >
+                      {t.side}
+                    </span>
+                    <span className="text-white font-bold">{t.symbol}</span>
+                    <span className="text-slate-400">
+                      Entry: ${t.entry_price || t.entry}
+                    </span>
+                  </div>
+                  <div className="text-slate-300 text-[11px] font-rajdhani">{t.notes}</div>
+                  <span className="text-[10px] text-slate-500">{t.created_at || t.date}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

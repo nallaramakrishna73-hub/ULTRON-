@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings as SettingsIcon,
   Cpu,
@@ -16,12 +16,47 @@ import { MemoryEntry } from '../types';
 
 export const SettingsView: React.FC = () => {
   const [config, setConfig] = useState<AIServiceConfig>(aiService.getConfig());
-  const [memories, setMemories] = useState<MemoryEntry[]>(aiService.getMemories());
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [newTopic, setNewTopic] = useState('');
   const [newContent, setNewContent] = useState('');
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [requireApproval, setRequireApproval] = useState(true);
   const [protectEtc, setProtectEtc] = useState(true);
+
+  // Ollama status
+  const [ollamaStatus, setOllamaStatus] = useState<{ connected: boolean; models: string[]; baseUrl: string }>({
+    connected: false,
+    models: ['qwen2.5-coder:7b', 'llama3.2:3b', 'mistral:7b'],
+    baseUrl: 'http://127.0.0.1:11434',
+  });
+  const [isCheckingOllama, setIsCheckingOllama] = useState(false);
+
+  const checkOllama = async () => {
+    setIsCheckingOllama(true);
+    try {
+      const res = await fetch('/api/ollama/models');
+      if (res.ok) {
+        const data = await res.json();
+        setOllamaStatus({
+          connected: data.connected,
+          models: data.models?.map((m: any) => m.name) || ['qwen2.5-coder:7b'],
+          baseUrl: data.baseUrl,
+        });
+      }
+    } catch {} finally {
+      setIsCheckingOllama(false);
+    }
+  };
+
+  const loadMemories = async () => {
+    const mems = await aiService.refreshMemories();
+    setMemories(mems);
+  };
+
+  useEffect(() => {
+    checkOllama();
+    loadMemories();
+  }, []);
 
   const handleSaveConfig = () => {
     aiService.setConfig(config);
@@ -29,16 +64,16 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setSavedSuccess(false), 2000);
   };
 
-  const handleAddMemory = () => {
+  const handleAddMemory = async () => {
     if (!newTopic.trim() || !newContent.trim()) return;
-    const created = aiService.addMemory(newTopic.trim(), newContent.trim(), 'high');
+    const created = await aiService.addMemory(newTopic.trim(), newContent.trim(), 'high');
     setMemories([created, ...memories]);
     setNewTopic('');
     setNewContent('');
   };
 
-  const handleDeleteMemory = (id: string) => {
-    aiService.deleteMemory(id);
+  const handleDeleteMemory = async (id: string) => {
+    await aiService.deleteMemory(id);
     setMemories(memories.filter((m) => m.id !== id));
   };
 
@@ -62,7 +97,7 @@ export const SettingsView: React.FC = () => {
               ULTRON SYSTEM SETTINGS
             </h1>
             <p className="text-xs font-rajdhani text-slate-300">
-              Ollama local engine configuration, speech preferences, security gates, and AI memory editor
+              Ollama local engine configuration, speech preferences, security gates, and SQLite memory editor
             </p>
           </div>
         </div>
@@ -80,50 +115,63 @@ export const SettingsView: React.FC = () => {
         <div className="space-y-4">
           {/* AI Inference Provider */}
           <div className="rounded-2xl glass-panel p-4 border border-indigo-900/40 space-y-3">
-            <div className="flex items-center gap-2 pb-2 border-b border-indigo-950">
-              <Cpu className="w-4 h-4 text-cyan-400" />
-              <span className="font-orbitron font-bold text-xs text-white">
-                AI Inference Engine (Ollama / Local)
-              </span>
+            <div className="flex items-center justify-between pb-2 border-b border-indigo-950">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-cyan-400" />
+                <span className="font-orbitron font-bold text-xs text-white">
+                  Local AI Inference Engine (Ollama)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                  ollamaStatus.connected ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' : 'bg-amber-950 text-amber-300 border border-amber-500/40'
+                }`}>
+                  {ollamaStatus.connected ? 'Ollama Online' : 'Standby / Fallback'}
+                </span>
+                <button onClick={checkOllama} className="text-slate-400 hover:text-white" title="Check connection">
+                  <RefreshCw className={`w-3 h-3 ${isCheckingOllama ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2.5 font-mono text-xs">
               <div>
-                <label className="text-slate-300 block mb-1">Inference Provider:</label>
+                <label className="text-slate-300 block mb-1">Primary Engine:</label>
                 <select
                   value={config.provider}
                   onChange={(e) => setConfig({ ...config, provider: e.target.value as any })}
                   className="w-full px-3 py-2 rounded-xl bg-black/60 border border-indigo-800/40 text-cyan-300 focus:outline-none focus:border-cyan-400"
                 >
-                  <option value="ollama">Local Ollama Engine (Recommended for Kali)</option>
-                  <option value="gemini">Google Gemini Cloud API Fallback</option>
-                  <option value="offline">Offline Autonomous Heuristics</option>
+                  <option value="ollama">Local Ollama (Primary / Kali Linux Default)</option>
+                  <option value="gemini">Google Gemini Cloud API (Secondary Fallback)</option>
+                  <option value="offline">Offline Autonomous Core (Zero Internet)</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1">Ollama API Endpoint:</label>
+                <label className="text-slate-300 block mb-1">Ollama Daemon URL:</label>
                 <input
                   type="text"
                   value={config.ollamaEndpoint}
                   onChange={(e) => setConfig({ ...config, ollamaEndpoint: e.target.value })}
-                  placeholder="http://localhost:11434"
+                  placeholder="http://127.0.0.1:11434"
                   className="w-full px-3 py-2 rounded-xl bg-black/60 border border-indigo-800/40 text-white focus:outline-none focus:border-cyan-400"
-                />
+                >
+                </input>
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1">Active Model Tag:</label>
+                <label className="text-slate-300 block mb-1">Active Model Name:</label>
                 <select
                   value={config.ollamaModel}
                   onChange={(e) => setConfig({ ...config, ollamaModel: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl bg-black/60 border border-indigo-800/40 text-purple-300 focus:outline-none focus:border-cyan-400"
                 >
-                  <option value="llama3.2:3b">llama3.2:3b (Ultra-fast responsive)</option>
-                  <option value="llama3.2:1b">llama3.2:1b (Minimal RAM footprint)</option>
-                  <option value="deepseek-r1:7b">deepseek-r1:7b (Advanced reasoning & CTF)</option>
-                  <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Exploit & Python coding)</option>
-                  <option value="mistral:7b">mistral:7b (General technical intelligence)</option>
+                  {ollamaStatus.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m} {m.includes('qwen2.5-coder') ? '(Recommended Default)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -150,7 +198,7 @@ export const SettingsView: React.FC = () => {
 
             <div className="space-y-2 text-xs font-rajdhani">
               <label className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-indigo-950 cursor-pointer">
-                <span>Require explicit user approval for root & sudo commands</span>
+                <span>Require explicit user approval for destructive commands</span>
                 <input
                   type="checkbox"
                   checked={requireApproval}
@@ -168,15 +216,6 @@ export const SettingsView: React.FC = () => {
                   className="rounded text-purple-600 focus:ring-0"
                 />
               </label>
-
-              <label className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-indigo-950 cursor-pointer">
-                <span>Localhost-only default binding (Block incoming WAN telemetry)</span>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="rounded text-purple-600 focus:ring-0"
-                />
-              </label>
             </div>
           </div>
         </div>
@@ -188,7 +227,7 @@ export const SettingsView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-emerald-400" />
                 <span className="font-orbitron font-bold text-xs text-white">
-                  ULTRON Memory Core (Persistent)
+                  ULTRON SQLite Memory Core
                 </span>
               </div>
               <button
@@ -200,7 +239,7 @@ export const SettingsView: React.FC = () => {
             </div>
 
             <p className="text-xs font-rajdhani text-slate-300 mt-2">
-              ULTRON retains project goals, system architecture preferences, and research history across restarts.
+              Persistent memory entries stored in local SQLite database (`data/ultron.db`).
             </p>
 
             {/* Add Memory Form */}
